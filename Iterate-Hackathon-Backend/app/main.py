@@ -1,5 +1,5 @@
 # app/main.py
-from typing import Any, AsyncGenerator, List, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,9 @@ import subprocess
 import sys
 import asyncio
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Dossiers pour stocker fichiers + scripts
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -790,6 +793,141 @@ def chat_dataset(payload: ChatDatasetRequest):
     )
 
     return ChatResponse(reply=reply)
+
+
+# ============================================================================
+# AGENT TEST ENDPOINT (Step 2: Agent Execution Sandbox)
+# ============================================================================
+
+
+class AgentTestRequest(BaseModel):
+    """Request model for agent testing endpoint."""
+    file_content: Optional[str] = None
+    sample_csv_rows: Optional[int] = 10
+
+
+class AgentTestResponse(BaseModel):
+    """Response model for agent testing endpoint."""
+    success: bool
+    agent_enabled: bool
+    execution_time_seconds: float
+    understanding: Optional[Dict[str, Any]] = None
+    analysis: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+@app.post("/agent/test", response_model=AgentTestResponse)
+async def test_agent_execution(request: AgentTestRequest = AgentTestRequest()):
+    """
+    Prototype endpoint to test agent execution on a small dataset.
+    
+    This endpoint demonstrates the agent sandbox with:
+    - Timeout enforcement
+    - Retry logic
+    - JSON validation
+    - Structured error handling
+    
+    Returns agent-generated dataset understanding and analysis.
+    """
+    import time
+    from .agent import (
+        generate_dataset_understanding,
+        generate_analysis_issues,
+    )
+    from .config import settings
+    
+    start_time = time.time()
+    
+    # Check if agent is enabled
+    if not settings.agent_enabled:
+        return AgentTestResponse(
+            success=False,
+            agent_enabled=False,
+            execution_time_seconds=time.time() - start_time,
+            error="Agent is disabled via AGENT_ENABLED flag",
+        )
+    
+    try:
+        # Use provided CSV or create a small sample dataset
+        if request.file_content:
+            # Parse user-provided CSV content
+            import io
+            df = pd.read_csv(io.StringIO(request.file_content))
+        else:
+            # Create a tiny sample dataset for testing
+            sample_data = {
+                "id": [1, 2, 3, 4, 5],
+                "name": ["Alice", "Bob", None, "David", "Eve"],
+                "age": [25, 30, 35, 30, 28],
+                "department": ["Sales", "Engineering", "Sales", "Engineering", "HR"],
+                "salary": [50000, 75000, 60000, 75000, 55000],
+            }
+            df = pd.DataFrame(sample_data)
+        
+        # Limit rows for testing
+        max_rows = min(request.sample_csv_rows or 10, len(df))
+        df = df.head(max_rows)
+        
+        # Prepare inputs for agent
+        dataset_id = "test_dataset_001"
+        file_name = "test_sample.csv"
+        row_count = len(df)
+        column_count = len(df.columns)
+        
+        # Get sample rows
+        sample_rows = df.head(5).to_dict(orient="records")
+        
+        # Build column summaries
+        column_summaries = []
+        for col in df.columns:
+            col_summary = {
+                "name": col,
+                "inferred_type": str(df[col].dtype),
+                "sample_values": df[col].dropna().head(3).astype(str).tolist(),
+                "missing_count": int(df[col].isna().sum()),
+            }
+            column_summaries.append(col_summary)
+        
+        # Step 1: Generate dataset understanding
+        understanding = await generate_dataset_understanding(
+            dataset_id=dataset_id,
+            file_name=file_name,
+            row_count=row_count,
+            column_count=column_count,
+            sample_rows=sample_rows,
+            column_summaries=column_summaries,
+            user_instructions="This is a test dataset for agent validation",
+        )
+        
+        # Step 2: Generate analysis issues
+        analysis = await generate_analysis_issues(
+            dataset_id=dataset_id,
+            dataset_understanding=understanding.model_dump(),
+            user_instructions="Identify any data quality issues",
+        )
+        
+        execution_time = time.time() - start_time
+        
+        return AgentTestResponse(
+            success=True,
+            agent_enabled=True,
+            execution_time_seconds=round(execution_time, 2),
+            understanding=understanding.model_dump(),
+            analysis=analysis.model_dump(),
+        )
+        
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"Agent test failed: {e}")
+        
+        return AgentTestResponse(
+            success=False,
+            agent_enabled=settings.agent_enabled,
+            execution_time_seconds=round(execution_time, 2),
+            error=str(e),
+        )
+
+
 @app.get("/health")
 def health():
     dataset_dirs = [p for p in DATA_DIR.iterdir() if p.is_dir()]

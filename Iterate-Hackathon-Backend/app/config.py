@@ -11,8 +11,30 @@ class Settings(BaseSettings):
     mongodb_collection_name: str = Field("message_store", env="MONGODB_COLLECTION_NAME")
 
     claude_model: str = Field(
-        "claude-3-5-sonnet-20241022",
+        "claude-haiku-4-5-20251001",
         env="CLAUDE_MODEL",
+    )
+
+    # Agent execution settings
+    agent_timeout_seconds: float = Field(
+        30.0,
+        env="AGENT_TIMEOUT_SECONDS",
+        description="Timeout for individual agent calls in seconds",
+    )
+    agent_max_retries: int = Field(
+        2,
+        env="AGENT_MAX_RETRIES",
+        description="Maximum retry attempts for failed agent calls",
+    )
+    agent_max_dataset_rows: int = Field(
+        100000,
+        env="AGENT_MAX_DATASET_ROWS",
+        description="Maximum dataset size (rows) for agent processing",
+    )
+    agent_enabled: bool = Field(
+        True,
+        env="AGENT_ENABLED",
+        description="Feature flag to enable/disable agent (fallback to heuristics)",
     )
 
     model_config = SettingsConfigDict(
