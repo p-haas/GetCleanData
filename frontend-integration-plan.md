@@ -18,12 +18,12 @@ With the FastAPI backend endpoints now live, this plan enumerates the work neede
 
 **Deliverable/Test**: Uploading a CSV through the UI triggers a backend call (observable in network tab) and advances to the Understand step with the returned `datasetId`. (✅ Verified via 200 OK in uvicorn logs on 2025-11-16; Understanding step currently errors because downstream fetch isn’t wired yet, which will be addressed in Step 3.)
 
-## 3. Understanding Step API Hook
+## 3. Understanding Step API Hook ✅
 
 - Replace mock data in `getDatasetUnderstanding` with a GET to `/datasets/{datasetId}/understanding` and surface loading/error states in `UnderstandingStep`.
 - Confirm column cards render the backend-provided fields.
 
-**Deliverable/Test**: After uploading, refreshing the page still shows the backend summary because the step fetches live data.
+**Deliverable/Test**: After uploading, refreshing the page still shows the backend summary because the step fetches live data. (✅ Verified on 2025-11-16 — page now renders backend row/column counts instead of the fallback error.)
 
 ## 4. Context Persistence
 
