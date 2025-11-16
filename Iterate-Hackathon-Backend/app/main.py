@@ -79,6 +79,7 @@ class DatasetSummary(BaseModel):
 class DatasetUnderstandingResponse(BaseModel):
     summary: DatasetSummary
     columns: List[ColumnSummary]
+    suggested_context: Optional[str] = None
 
 
 class UploadDatasetResponse(BaseModel):
@@ -100,6 +101,7 @@ class DatasetContextResponse(BaseModel):
     dataset_id: str
     instructions: str
     column_edits: Optional[Any] = None
+    suggested_context: Optional[str] = None
     updated_at: str
 
 
@@ -366,32 +368,131 @@ def _persist_smart_fix_response(dataset_id: str, issue_id: str, response: str) -
 
 
 @app.get("/datasets/{dataset_id}/understanding", response_model=DatasetUnderstandingResponse)
-def get_dataset_understanding(dataset_id: str):
+async def get_dataset_understanding(dataset_id: str, force_refresh: bool = False):
+    """
+    Get dataset understanding using AI agent or cached result.
+    
+    Args:
+        dataset_id: Dataset identifier
+        force_refresh: Force agent to re-analyze (bypass cache)
+    
+    Returns:
+        DatasetUnderstandingResponse with business-focused descriptions
+    """
+    from .agent import generate_dataset_understanding
+    from .sampling import (
+        smart_sample_dataframe,
+        prepare_sample_rows,
+        prepare_column_summaries,
+    )
+    from .config import settings
+    
     try:
         metadata = load_dataset_metadata(DATA_DIR, dataset_id)
-        raw_path = resolve_raw_path(DATA_DIR, metadata)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    dataset_dir = dataset_dir_path(DATA_DIR, dataset_id)
+    understanding_cache_path = dataset_dir / "understanding.json"
+    
+    # Try to load from cache first
+    if not force_refresh and understanding_cache_path.exists():
+        try:
+            cached_data = json.loads(
+                understanding_cache_path.read_text(encoding="utf-8")
+            )
+            logger.info(f"Returning cached understanding for {dataset_id}")
+            return DatasetUnderstandingResponse(**cached_data)
+        except Exception as e:
+            logger.warning(f"Failed to load cached understanding: {e}")
+            # Continue to regenerate
+    
+    # Load and sample dataset
     try:
         df = _load_dataframe(metadata)
-    except Exception as exc:  # pragma: no cover - runtime failure surfaced to caller
-        raise HTTPException(status_code=500, detail=f"Erreur de lecture du dataset: {exc}") from exc
-
-    columns = [
-        _build_column_summary(df[col])
-        for col in df.columns
-    ]
-
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur de lecture du dataset: {exc}"
+        ) from exc
+    
+    # Smart sampling for large datasets
+    original_row_count = len(df)
+    sampled_df = smart_sample_dataframe(df, max_sample_rows=300)
+    logger.info(
+        f"Sampled {len(sampled_df)} rows from {original_row_count} for analysis"
+    )
+    
+    # Prepare inputs for agent
+    sample_rows = prepare_sample_rows(sampled_df, max_rows=5)
+    column_summaries = prepare_column_summaries(sampled_df)
+    
+    # Try agent-powered understanding if enabled
+    if settings.agent_enabled:
+        try:
+            logger.info(f"Calling agent for dataset understanding: {dataset_id}")
+            agent_result = await generate_dataset_understanding(
+                dataset_id=dataset_id,
+                file_name=metadata.get("original_filename", dataset_id),
+                row_count=original_row_count,
+                column_count=len(df.columns),
+                sample_rows=sample_rows,
+                column_summaries=column_summaries,
+                user_instructions="",
+            )
+            
+            # Convert to response model
+            response = DatasetUnderstandingResponse(
+                summary=DatasetSummary(
+                    name=agent_result.summary.name,
+                    description=agent_result.summary.description,
+                    rowCount=agent_result.summary.rowCount,
+                    columnCount=agent_result.summary.columnCount,
+                    observations=agent_result.summary.observations,
+                ),
+                columns=[
+                    ColumnSummary(
+                        name=col.name,
+                        dataType=col.dataType,
+                        description=col.description,
+                        sampleValues=col.sampleValues,
+                    )
+                    for col in agent_result.columns
+                ],
+                suggested_context=agent_result.suggested_context,
+            )
+            
+            # Cache the result
+            understanding_cache_path.write_text(
+                response.model_dump_json(indent=2),
+                encoding="utf-8"
+            )
+            logger.info(f"Cached agent understanding for {dataset_id}")
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Agent failed for understanding: {e}")
+            logger.warning("Falling back to heuristic analysis")
+            # Fall through to heuristics
+    
+    # Fallback: Heuristic-based understanding
+    logger.info(f"Using heuristic understanding for {dataset_id}")
+    columns = [_build_column_summary(df[col]) for col in df.columns]
+    
     missing_counts = df.isna().sum().sort_values(ascending=False)
     observations: List[str] = []
     for col, count in missing_counts.head(3).items():
         if count > 0:
-            observations.append(f"{col} contient {int(count)} valeurs manquantes")
-
+            observations.append(
+                f"{col} contient {int(count)} valeurs manquantes"
+            )
+    
     if not observations:
-        observations.append("Aucun signal de qualité majeur détecté sur les 3 premières colonnes.")
-
+        observations.append(
+            "Aucun signal de qualité majeur détecté"
+        )
+    
     summary = DatasetSummary(
         name=metadata.get("original_filename", dataset_id),
         description=f"Dataset importé via {metadata.get('file_type', 'csv').upper()} le {metadata.get('uploaded_at', '')}",
@@ -399,8 +500,20 @@ def get_dataset_understanding(dataset_id: str):
         columnCount=int(df.shape[1]),
         observations=observations,
     )
-
-    return DatasetUnderstandingResponse(summary=summary, columns=columns)
+    
+    response = DatasetUnderstandingResponse(
+        summary=summary,
+        columns=columns,
+        suggested_context=None,
+    )
+    
+    # Cache heuristic result too
+    understanding_cache_path.write_text(
+        response.model_dump_json(indent=2),
+        encoding="utf-8"
+    )
+    
+    return response
 
 
 @app.get("/datasets/{dataset_id}/context", response_model=DatasetContextResponse)
@@ -411,13 +524,35 @@ def get_dataset_context(dataset_id: str):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     context = load_dataset_context(DATA_DIR, dataset_id)
+    
+    # Try to get suggested_context from cached understanding
+    dataset_dir = dataset_dir_path(DATA_DIR, dataset_id)
+    understanding_cache_path = dataset_dir / "understanding.json"
+    suggested_context = None
+    
+    if understanding_cache_path.exists():
+        try:
+            cached_understanding = json.loads(
+                understanding_cache_path.read_text(encoding="utf-8")
+            )
+            suggested_context = cached_understanding.get("suggested_context")
+        except Exception:
+            pass
+    
     if context is None:
         context = {
             "dataset_id": dataset_id,
             "instructions": "",
             "column_edits": None,
-            "updated_at": metadata.get("uploaded_at", datetime.now(timezone.utc).isoformat()),
+            "suggested_context": suggested_context,
+            "updated_at": metadata.get(
+                "uploaded_at",
+                datetime.now(timezone.utc).isoformat()
+            ),
         }
+    else:
+        # Add suggested_context to existing context
+        context["suggested_context"] = suggested_context
 
     return DatasetContextResponse(**context)
 

@@ -43,6 +43,7 @@ class ColumnSummaryModel(BaseModel):
 class DatasetUnderstandingModel(BaseModel):
     summary: DatasetSummaryModel
     columns: List[ColumnSummaryModel]
+    suggested_context: str
 
 
 class IssueModel(BaseModel):
@@ -198,49 +199,55 @@ async def generate_dataset_understanding(
         ValidationError: If agent output doesn't match schema
         Exception: If agent call fails
     """
-    system_prompt = """You are a data analysis expert. Your task is to analyze dataset metadata and generate a structured understanding of the dataset.
+    system_prompt = """You are a business data analyst helping non-technical users understand their datasets.
 
-You MUST return ONLY valid JSON matching this exact schema (no markdown, no code fences, no extra text):
+Generate a BUSINESS-FOCUSED analysis that explains what the data represents in plain language.
+
+You MUST return ONLY valid JSON (no markdown, no code fences):
 
 {
   "summary": {
     "name": "filename.csv",
-    "description": "Brief description of what this dataset contains",
+    "description": "Clear business explanation of what this dataset contains",
     "rowCount": 123,
     "columnCount": 5,
-    "observations": ["First observation", "Second observation"]
+    "observations": [
+      "Business insight 1",
+      "Business insight 2"
+    ]
   },
   "columns": [
     {
       "name": "column_name",
       "dataType": "string|numeric|date|categorical|boolean",
-      "description": "What this column represents",
+      "description": "Business meaning (not just data type)",
       "sampleValues": ["val1", "val2", "val3"]
     }
-  ]
+  ],
+  "suggested_context": "2-4 sentence summary of dataset purpose and patterns"
 }
 
-CONSTRAINTS:
-- dataType must be one of: string, numeric, date, categorical, boolean
-- observations: max 5 items, each a clear human-readable sentence
+CRITICAL RULES:
+- Use BUSINESS language, not technical jargon
+- Explain WHY columns exist, not just WHAT type they are
+- suggested_context: summarize dataset purpose for business users
 - Return ONLY the JSON, nothing else"""
 
-    user_prompt = f"""Analyze this dataset:
+    user_prompt = f"""Analyze this business dataset:
 
-Dataset ID: {dataset_id}
-File Name: {file_name}
-Row Count: {row_count}
-Column Count: {column_count}
+Dataset: {file_name}
+Total Rows: {row_count:,}
+Total Columns: {column_count}
 
-Sample Rows (first 5):
+Sample Data (first 5 rows):
 {json.dumps(sample_rows, indent=2)}
 
-Column Summaries:
+Column Statistics:
 {json.dumps(column_summaries, indent=2)}
 
-User Instructions: {user_instructions or "None provided"}
+User's Context: {user_instructions or "None provided yet"}
 
-Generate the dataset understanding JSON now."""
+Generate business-focused understanding JSON."""
 
     try:
         raw_response = await _call_agent_with_retry(

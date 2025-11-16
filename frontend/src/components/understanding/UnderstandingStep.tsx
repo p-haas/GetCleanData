@@ -42,8 +42,17 @@ export const UnderstandingStep = () => {
       ]);
 
       setUnderstanding(data);
+      
+      // Pre-fill with suggested context if available and user hasn't added their own
       if (contextData?.instructions) {
+        // User has already provided instructions, use those
         setUserContext(contextData.instructions);
+      } else if (data?.suggested_context) {
+        // No user instructions yet, use AI-generated context
+        setUserContext(data.suggested_context);
+      } else if (contextData?.suggested_context) {
+        // Fallback to context endpoint's suggested_context
+        setUserContext(contextData.suggested_context);
       }
     } catch (error) {
       toast({
@@ -187,7 +196,10 @@ export const UnderstandingStep = () => {
         <CardHeader>
           <CardTitle>Add Context or Instructions</CardTitle>
           <CardDescription>
-            Help the AI better understand your data by providing additional context or specific instructions
+            {understanding.suggested_context 
+              ? "Review and refine the AI-generated context below, or add your own specific instructions"
+              : "Help the AI better understand your data by providing additional context or specific instructions"
+            }
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -198,6 +210,11 @@ export const UnderstandingStep = () => {
             rows={4}
             className="resize-none"
           />
+          {understanding.suggested_context && userContext === understanding.suggested_context && (
+            <p className="text-xs text-muted-foreground mt-2">
+              💡 AI-generated context - feel free to edit or add more details
+            </p>
+          )}
         </CardContent>
       </Card>
 

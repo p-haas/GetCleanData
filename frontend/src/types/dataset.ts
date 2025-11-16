@@ -16,6 +16,7 @@ export interface DatasetSummary {
 export interface DatasetUnderstanding {
   columns: Column[];
   summary: DatasetSummary;
+  suggested_context?: string;
 }
 
 export interface Issue {
