@@ -443,6 +443,8 @@ df = pd.read_csv(StringIO('''{df_csv}'''))
             logger.error(f"No tool use found in response. Full response: {response}")
             raise ValueError("Agent did not use the report_data_quality_issues tool")
 
+        # Parse the JSON response
+        result = _parse_analysis_response(final_text, dataset_id)
         # Extract the structured data from the tool input
         result = tool_use_block.input
         
