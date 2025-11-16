@@ -91,9 +91,22 @@ class APIClient {
     return this.request<DatasetUnderstanding>(`/datasets/${datasetId}/understanding`);
   }
 
+  async getDatasetContext(datasetId: string): Promise<{ instructions: string; column_edits?: any } | null> {
+    try {
+      return await this.request<{ instructions: string; column_edits?: any }>(`/datasets/${datasetId}/context`);
+    } catch (error) {
+      if (error instanceof APIError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async saveContext(datasetId: string, context: string, columnEdits?: any): Promise<void> {
-    await delay(800);
-    console.log('Saving context for', datasetId, ':', context, columnEdits);
+    await this.request(`/datasets/${datasetId}/context`, {
+      method: 'POST',
+      body: JSON.stringify({ instructions: context, column_edits: columnEdits }),
+    });
   }
 
   async analyzeDataset(datasetId: string): Promise<AnalysisResult> {

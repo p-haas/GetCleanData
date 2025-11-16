@@ -36,8 +36,15 @@ export const UnderstandingStep = () => {
 
     setIsLoading(true);
     try {
-      const data = await apiClient.getDatasetUnderstanding(datasetId);
+      const [data, contextData] = await Promise.all([
+        apiClient.getDatasetUnderstanding(datasetId),
+        apiClient.getDatasetContext(datasetId),
+      ]);
+
       setUnderstanding(data);
+      if (contextData?.instructions) {
+        setUserContext(contextData.instructions);
+      }
     } catch (error) {
       toast({
         title: 'Error',
