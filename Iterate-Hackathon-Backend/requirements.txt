@@ -5,6 +5,7 @@ python-dotenv
 pydantic
 pydantic-settings
 
+anthropic>=0.39.0         # For code execution beta
 langchain
 langchain-anthropic
 langchain-postgres
