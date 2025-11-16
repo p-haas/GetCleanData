@@ -4,12 +4,12 @@
 
 With the FastAPI backend endpoints now live, this plan enumerates the work needed to migrate the React frontend off mocks and onto the real API. Each step ends with a clear deliverable/test so we can verify behavior incrementally.
 
-## 1. API Client Foundation
+## 1. API Client Foundation ✅
 
 - Replace the mock `apiClient` in `frontend/src/lib/apiClient.ts` with real fetch/axios calls pointed at the FastAPI base URL (use Vite env vars like `VITE_API_BASE_URL`).
 - Standardize error handling (e.g., throwing typed errors the UI can toast) and add a helper for JSON parsing + auth headers if needed.
 
-**Deliverable/Test**: Updating `apiClient` compiles cleanly, and hitting `/health` via a temporary method confirms connectivity.
+**Deliverable/Test**: Updating `apiClient` compiles cleanly, and hitting `/health` via a temporary method confirms connectivity. (✅ Verified via console call returning `{ status: 'up', ... }` on 2025-11-16.)
 
 ## 2. Dataset Upload Wiring
 
