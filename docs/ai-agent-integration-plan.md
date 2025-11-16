@@ -4,32 +4,29 @@
 
 With the backend and frontend now sharing a stable contract, the next milestone is to introduce the autonomous AI agent that generates insights (dataset understanding, issues, fix suggestions) instead of our current heuristics. This guide enumerates the steps required to integrate the agent safely, with actionable deliverables for each phase.
 
-## 1. Define Agent Contracts
+## 1. Define Agent Contracts ✅
 
 - Enumerate the exact prompts/inputs the agent needs (dataset metadata, sample rows, user instructions).
-- Specify the structured JSON schemas the agent must return for:
-  - Dataset understanding (summary, observations, columns).
-  - Analysis issues (id, type, severity, affected columns/rows, suggested actions, temporal patterns).
-  - Smart-fix follow-up questions.
+- Specify the structured JSON schemas the agent must return for dataset understanding, analysis issues, and smart-fix prompts.
 - Document the schema in `docs/agent-contracts.md` so backend and agent code share the same contract.
 
-**Deliverable/Test**: Contract doc reviewed by backend + prompt engineers; mock JSON validated against TypeScript types.
+**Deliverable/Test**: Contract doc reviewed by backend + prompt engineers; mock JSON validated against TypeScript types. (✅ `docs/agent-contracts.md` authored 2025-11-16.)
 
-## 2. Agent Execution Sandbox
+## 2. Agent Execution Sandbox ✅
 
 - Decide how the agent runs worker-side (e.g., within FastAPI using LangChain, or via an async job queue like Celery/RQ).
-- Ensure long-running analysis doesn’t block HTTP requests: offload to background tasks or streaming endpoints that read from job logs.
+- Ensure long-running analysis doesn't block HTTP requests: offload to background tasks or streaming endpoints that read from job logs.
 - Add guardrails (timeouts, retry limits, logging) to keep the agent from looping or emitting invalid data.
 
-**Deliverable/Test**: Prototype endpoint (`/agent/test`) that runs the agent on a small CSV and returns structured JSON in under N seconds.
+**Deliverable/Test**: Prototype endpoint (`/agent/test`) that runs the agent on a small CSV and returns structured JSON in under N seconds. (✅ Implemented 2025-11-16. See `AGENT_SANDBOX.md` for details.)
 
-## 3. Replace Dataset Understanding Heuristics
+## 3. Replace Dataset Understanding Heuristics ✅
 
 - Inside `app/main.py`, swap `_load_dataframe`-based summarization with an agent call that produces `DatasetUnderstanding`.
-- Cache the agent output (e.g., `data/{id}/understanding.json`) so reloading the page doesn’t retrigger the agent unless forced.
+- Cache the agent output (e.g., `data/{id}/understanding.json`) so reloading the page doesn't retrigger the agent unless forced.
 - Provide a fallback (old heuristics) if the agent errors, ensuring the frontend still receives data.
 
-**Deliverable/Test**: Upload + Understand flow shows agent-generated descriptions; backend logs confirm cached response reuse.
+**Deliverable/Test**: Upload + Understand flow shows agent-generated descriptions; backend logs confirm cached response reuse. (✅ Implemented 2025-11-16. Agent generates business-focused descriptions with smart sampling and caching.)
 
 ## 4. Agent-Driven Analysis & Issues
 
