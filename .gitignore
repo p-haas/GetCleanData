@@ -8,3 +8,5 @@ __pycache__/
 *.pyd
 .Python
 node_modules/
+data/
+**/data/
