@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
     
     claude_code_exec_model: str = Field(
-        "claude-sonnet-4-5-20250929",
+        "claude-haiku-4-5-20251001",
         env="CLAUDE_CODE_EXEC_MODEL",
         description="Model to use for code execution analysis (Sonnet 4.5 recommended)",
     )
