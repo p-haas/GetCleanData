@@ -261,37 +261,96 @@ async def analyze_dataset_with_code(
         if desc:
             dataset_summary["description"] = desc[:100]  # Very brief
 
-    # Create concise prompts
-    system_prompt = """You are a data quality expert. Analyze the dataset and return ONLY valid JSON (no markdown):
-
-{
-  "issues": [
-    {
-      "id": "dataset_id_issue_slug",
-      "type": "missing_values|duplicates|outliers|inconsistent_categories",
-      "severity": "low|medium|high",
-      "description": "Issue description with specific numbers",
-      "affectedColumns": ["col1"],
-      "suggestedAction": "What to do",
-      "category": "quick_fixes|smart_fixes",
-      "affectedRows": 123,
-      "investigation": {
-        "code": "result = df['col'].isna().sum()",
-        "output": "actual output",
-        "findings": "what was found"
-      }
+    # Define the analysis result tool schema to enforce structured output
+    analysis_tool = {
+        "name": "report_data_quality_issues",
+        "description": "Report data quality issues found in the dataset analysis. Use code execution to investigate each issue and gather concrete evidence.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "Unique identifier: dataset_id_issue_type_column"
+                            },
+                            "type": {
+                                "type": "string",
+                                "enum": ["missing_values", "duplicates", "outliers", "inconsistent_categories", "whitespace", "invalid_dates", "category_drift", "supplier_variations"],
+                                "description": "Type of data quality issue"
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high"],
+                                "description": "Impact severity"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Detailed description with specific numbers from investigation"
+                            },
+                            "affectedColumns": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of column names affected"
+                            },
+                            "suggestedAction": {
+                                "type": "string",
+                                "description": "Specific action to resolve this issue"
+                            },
+                            "category": {
+                                "type": "string",
+                                "enum": ["quick_fixes", "smart_fixes"],
+                                "description": "quick_fixes are auto-fixable, smart_fixes need user input"
+                            },
+                            "affectedRows": {
+                                "type": "integer",
+                                "description": "Number of rows affected by this issue"
+                            },
+                            "temporalPattern": {
+                                "type": "string",
+                                "description": "Optional temporal pattern like 'Increased after Q2 2024'"
+                            },
+                            "investigation": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {
+                                        "type": "string",
+                                        "description": "Python code used to detect this issue (assign result to 'result' variable)"
+                                    },
+                                    "output": {
+                                        "type": "string",
+                                        "description": "Output from executing the code"
+                                    },
+                                    "findings": {
+                                        "type": "string",
+                                        "description": "What the investigation revealed"
+                                    }
+                                },
+                                "required": ["code", "output", "findings"]
+                            }
+                        },
+                        "required": ["id", "type", "severity", "description", "affectedColumns", "suggestedAction", "category"]
+                    }
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary like 'Found 5 issues affecting 1,234 rows'"
+                },
+                "completedAt": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp"
+                }
+            },
+            "required": ["issues", "summary", "completedAt"]
+        }
     }
-  ],
-  "summary": "Found X issues",
-  "completedAt": "ISO timestamp"
-}
 
-Rules:
-- Use code execution to investigate and get concrete numbers
-- Write efficient, scalable code (assign results to 'result' variable)
-- Return ONLY the JSON"""
+    system_prompt = """You are a data quality expert. Use code execution to investigate the dataset for issues, then report your findings using the report_data_quality_issues tool."""
 
-    user_context = f" Context: {user_instructions}" if user_instructions else ""
+    user_context = f" User context: {user_instructions}" if user_instructions else ""
 
     try:
         # PHASE 1: Send sample to Claude for script generation
@@ -343,7 +402,7 @@ Rules:
 Columns: {', '.join(dataset_summary['columns'][:10])}{'...' if len(dataset_summary['columns']) > 10 else ''}
 Types: {json.dumps(dataset_summary['dtypes'], default=str)}{user_context}{truncation_note}
 
-Analyze for: missing values, duplicates, outliers, inconsistencies. Use code execution, then return JSON."""
+Analyze for: missing values, duplicates, outliers, inconsistencies. Use code execution to investigate each issue."""
         
         response = await asyncio.to_thread(
             client.beta.messages.create,
@@ -363,22 +422,49 @@ df = pd.read_csv(StringIO('''{df_csv}'''))
 {user_prompt}""",
                 }
             ],
-            tools=[{"type": "code_execution_20250825", "name": "code_execution"}],
+            tools=[
+                {"type": "code_execution_20250825", "name": "code_execution"},
+                analysis_tool
+            ],
+            tool_choice={"type": "tool", "name": "report_data_quality_issues"}
         )
 
         logger.info(f"Claude response: {response}")
 
-        # Extract the final text response (should be JSON)
-        final_text = None
+        # Extract tool use from response (Claude will use the report_data_quality_issues tool)
+        tool_use_block = None
         for block in response.content:
-            if hasattr(block, "type") and block.type == "text":
-                final_text = block.text
+            if hasattr(block, "type") and block.type == "tool_use":
+                if block.name == "report_data_quality_issues":
+                    tool_use_block = block
+                    break
 
-        if not final_text:
-            raise ValueError("No text response from Claude")
+        if not tool_use_block:
+            logger.error(f"No tool use found in response. Full response: {response}")
+            raise ValueError("Agent did not use the report_data_quality_issues tool")
 
         # Parse the JSON response
         result = _parse_analysis_response(final_text, dataset_id)
+        # Extract the structured data from the tool input
+        result = tool_use_block.input
+        
+        # Ensure completedAt is set
+        if "completedAt" not in result:
+            result["completedAt"] = datetime.now(timezone.utc).isoformat()
+        
+        # Validate required fields
+        if "issues" not in result:
+            raise ValueError("Tool response missing 'issues' field")
+        
+        # Ensure all issues have required fields
+        for issue in result["issues"]:
+            if "id" not in issue:
+                issue["id"] = f"{dataset_id}_{issue.get('type', 'unknown')}"
+            if "category" not in issue:
+                issue["category"] = "quick_fixes"
+            if "severity" not in issue:
+                issue["severity"] = "medium"
+                
         _emit_progress(
             progress_callback,
             "progress",
@@ -663,15 +749,22 @@ Return the JSON now."""
         # Extract text from response
         text = response.content[0].text if response.content else ""
         
-        # Strip code fences
+        # Extract JSON from response (handle prose before/after JSON)
         text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3:]
-        text = text.strip()
+        json_start = text.find('{')
+        json_end = text.rfind('}')
+        
+        if json_start != -1 and json_end != -1 and json_end > json_start:
+            text = text[json_start:json_end + 1]
+        else:
+            # Fallback: strip code fences
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            text = text.strip()
         
         # Parse JSON
         evidence = json.loads(text)
@@ -769,15 +862,24 @@ def _get_problematic_sample(
 
 def _parse_analysis_response(response_text: str, dataset_id: str) -> Dict[str, Any]:
     """Parse and validate the agent's JSON response."""
-    # Strip code fences if present
     text = response_text.strip()
-    if text.startswith("```json"):
-        text = text[7:]
-    elif text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    text = text.strip()
+    
+    # Try to extract JSON from the response (handle prose before/after JSON)
+    # Look for JSON object boundaries
+    json_start = text.find('{')
+    json_end = text.rfind('}')
+    
+    if json_start != -1 and json_end != -1 and json_end > json_start:
+        text = text[json_start:json_end + 1]
+    else:
+        # Fallback: try stripping code fences
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
 
     try:
         data = json.loads(text)
@@ -802,7 +904,11 @@ def _parse_analysis_response(response_text: str, dataset_id: str) -> Dict[str, A
         return data
 
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON response: {e}\nResponse: {text[:500]}")
+        logger.error(
+            f"Failed to parse JSON response: {e}\n"
+            f"Extracted text (first 500 chars): {text[:500]}\n"
+            f"Original response (first 500 chars): {response_text[:500]}"
+        )
         raise ValueError(f"Invalid JSON response: {e}")
 
 
