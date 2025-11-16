@@ -1,5 +1,5 @@
 # app/main.py
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
@@ -9,13 +9,16 @@ from .dataset_store import (
     generate_dataset_id,
     infer_delimiter,
     load_dataset_metadata,
+    load_dataset_context,
     persist_dataset_file,
+    save_dataset_context,
     resolve_raw_path,
 )
 from .excel_context import build_excel_context
 from .tools import generate_error_analysis_script
 import pandas as pd
 from pathlib import Path
+from datetime import datetime, timezone
 import subprocess
 import sys
 
@@ -69,6 +72,18 @@ class UploadDatasetResponse(BaseModel):
     delimiter: Optional[str]
     storage_path: str
     uploaded_at: str
+
+
+class DatasetContextRequest(BaseModel):
+    instructions: str
+    column_edits: Optional[Any] = None
+
+
+class DatasetContextResponse(BaseModel):
+    dataset_id: str
+    instructions: str
+    column_edits: Optional[Any] = None
+    updated_at: str
 
 class ChatDatasetRequest(BaseModel):
     session_id: str
@@ -199,6 +214,45 @@ def get_dataset_understanding(dataset_id: str):
     )
 
     return DatasetUnderstandingResponse(summary=summary, columns=columns)
+
+
+@app.get("/datasets/{dataset_id}/context", response_model=DatasetContextResponse)
+def get_dataset_context(dataset_id: str):
+    try:
+        metadata = load_dataset_metadata(DATA_DIR, dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    context = load_dataset_context(DATA_DIR, dataset_id)
+    if context is None:
+        context = {
+            "dataset_id": dataset_id,
+            "instructions": "",
+            "column_edits": None,
+            "updated_at": metadata.get("uploaded_at", datetime.now(timezone.utc).isoformat()),
+        }
+
+    return DatasetContextResponse(**context)
+
+
+@app.post("/datasets/{dataset_id}/context", response_model=DatasetContextResponse)
+def save_dataset_context_endpoint(dataset_id: str, payload: DatasetContextRequest):
+    try:
+        load_dataset_metadata(DATA_DIR, dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        context = save_dataset_context(
+            DATA_DIR,
+            dataset_id,
+            payload.instructions,
+            payload.column_edits,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return DatasetContextResponse(**context)
 
 
 @app.post("/chat", response_model=ChatResponse)

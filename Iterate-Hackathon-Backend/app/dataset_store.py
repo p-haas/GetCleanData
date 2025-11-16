@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 ALLOWED_EXTENSIONS = {".csv", ".xls", ".xlsx"}
 CSV_DELIMITERS = [",", ";", "\t", "|"]
@@ -110,3 +110,35 @@ def resolve_raw_path(data_dir: Path, metadata: dict) -> Path:
             return stored_path
 
     raise FileNotFoundError(f"Impossible de localiser le fichier brut pour dataset_id={dataset_id}")
+
+
+def save_dataset_context(
+    data_dir: Path,
+    dataset_id: str,
+    instructions: str,
+    column_edits: Optional[Any] = None,
+) -> dict:
+    dataset_dir = data_dir / dataset_id
+    if not dataset_dir.exists():
+        raise FileNotFoundError(f"Dataset {dataset_id} introuvable. Upload requis avant de sauvegarder du contexte.")
+
+    payload = {
+        "dataset_id": dataset_id,
+        "instructions": instructions,
+        "column_edits": column_edits,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    context_path = dataset_dir / "context.json"
+    context_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def load_dataset_context(data_dir: Path, dataset_id: str) -> Optional[dict]:
+    context_path = data_dir / dataset_id / "context.json"
+    if not context_path.exists():
+        return None
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    context.setdefault("dataset_id", dataset_id)
+    context.setdefault("instructions", "")
+    return context
