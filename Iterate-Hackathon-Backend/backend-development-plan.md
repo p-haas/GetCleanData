@@ -53,13 +53,13 @@ This document captures the concrete steps required to mature the FastAPI backend
 
 **Deliverable/Test**: Selecting issues in the UI and clicking “Apply fixes” results in backend logs plus a success response; repeated GET `/analysis` reflects updated issue states if applicable. (✅ Verified via curl POST `/datasets/<id>/apply` on 2025-11-16.)
 
-## 7. Smart Fix Responses
+## 7. Smart Fix Responses ✅
 
 - Implement `/datasets/{datasetId}/smart-fix` (or extend `/apply`) to capture smart-fix answers (`intentional`, `standardize`, `keep`, `custom`) tied to issues that were created in Step 5.
 - Persist responses within `data/{datasetId}` (e.g., `smart_fix_responses.json`) and use them to drive follow-up remediation or human review flows.
 - Validate inputs so the frontend receives meaningful errors when responses are missing or malformed, and consider reflecting stored answers when re-fetching analysis data.
 
-**Deliverable/Test**: Submitting a smart fix answer from the dialog leads to a stored entry and optional status update; backend logs confirm receipt.
+**Deliverable/Test**: Submitting a smart fix answer from the dialog leads to a stored entry and optional status update; backend logs confirm receipt. (✅ Verified via POST `/datasets/<id>/smart-fix` curl on 2025-11-16.)
 
 ## 8. Health & Observability
 
