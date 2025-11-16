@@ -72,13 +72,13 @@ export const AnalysisStep = () => {
   };
 
   const handleApplyChanges = async () => {
-    if (!datasetId) return;
+    if (!datasetId || acceptedIssues.size === 0) return;
 
     try {
-      await apiClient.applyChanges(datasetId, Array.from(acceptedIssues));
+      const result = await apiClient.applyChanges(datasetId, Array.from(acceptedIssues));
       toast({
         title: 'Changes applied',
-        description: `Applied ${acceptedIssues.size} cleaning operations`,
+        description: result.message,
       });
     } catch (error) {
       toast({

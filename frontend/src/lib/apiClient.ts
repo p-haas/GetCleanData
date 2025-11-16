@@ -148,9 +148,11 @@ class APIClient {
     }
   }
 
-  async applyChanges(datasetId: string, acceptedIssueIds: string[]): Promise<void> {
-    await delay(1000);
-    console.log('Applying changes for issues:', acceptedIssueIds);
+  async applyChanges(datasetId: string, acceptedIssueIds: string[]): Promise<{ applied: string[]; skipped: string[]; message: string }> {
+    return this.request<{ applied: string[]; skipped: string[]; message: string }>(`/datasets/${datasetId}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ issueIds: acceptedIssueIds }),
+    });
   }
 }
 
