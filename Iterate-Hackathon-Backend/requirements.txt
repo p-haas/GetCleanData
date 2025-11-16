@@ -1,0 +1,20 @@
+fastapi
+uvicorn[standard]
+
+python-dotenv
+pydantic
+pydantic-settings
+
+langchain
+langchain-anthropic
+langchain-postgres
+langchain-huggingface
+langchain-mongodb
+
+pymongo
+psycopg[binary]          # psycopg3
+pgvector                 
+
+sentence-transformers     # for HuggingFaceEmbeddings
+pandas
+openpyxl
