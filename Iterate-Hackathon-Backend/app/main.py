@@ -1,5 +1,5 @@
 # app/main.py
-from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Optional, Tuple
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -139,7 +139,7 @@ class IssueResponse(BaseModel):
     affectedColumns: List[str]
     suggestedAction: str
     category: Literal["quick_fixes", "smart_fixes"]
-    accepted: Optional[bool] = False
+    accepted: Optional[bool] = None
     affectedRows: Optional[int] = None
     temporalPattern: Optional[str] = None
     investigation: Optional[InvestigationResult] = None
@@ -160,6 +160,20 @@ class StreamMessageResponse(BaseModel):
     message: str
     timestamp: str
     data: Optional[Any] = None
+
+
+class IssueDecisionRequest(BaseModel):
+    issueId: str
+    accepted: bool
+    reason: Optional[str] = None
+
+
+class IssueDecisionResponse(BaseModel):
+    dataset_id: str
+    issue_id: str
+    accepted: bool
+    reason: Optional[str] = None
+    updated_at: str
 
 
 class ApplyIssuesRequest(BaseModel):
@@ -298,7 +312,8 @@ def _load_analysis_result(dataset_id: str) -> AnalysisResultResponse:
             f"Aucune analyse enregistrée pour dataset_id={dataset_id}. Lancez /analysis avant d'appliquer des corrections."
         )
     data = json.loads(analysis_path.read_text(encoding="utf-8"))
-    return AnalysisResultResponse(**data)
+    result = AnalysisResultResponse(**data)
+    return _apply_issue_decisions(dataset_id, result)
 
 
 def _persist_applied_issues(dataset_id: str, applied: List[str]) -> None:
@@ -317,6 +332,123 @@ def _load_applied_issues(dataset_id: str) -> List[str]:
         return []
     data = json.loads(path.read_text(encoding="utf-8"))
     return data.get("applied", [])
+
+
+def _issue_decisions_path(dataset_id: str) -> Path:
+    return dataset_dir_path(DATA_DIR, dataset_id) / "issue_decisions.json"
+
+
+def _load_issue_decisions(dataset_id: str) -> Dict[str, Dict[str, Any]]:
+    path = _issue_decisions_path(dataset_id)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("issue_decisions.json is corrupted for %s", dataset_id)
+        return {}
+    return data.get("decisions", {})
+
+
+def _save_issue_decisions(dataset_id: str, decisions: Dict[str, Dict[str, Any]]) -> None:
+    path = _issue_decisions_path(dataset_id)
+    payload = {
+        "dataset_id": dataset_id,
+        "decisions": decisions,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _upsert_issue_decisions(
+    dataset_id: str,
+    updates: List[Tuple[str, bool, Optional[str]]],
+) -> Dict[str, Dict[str, Any]]:
+    if not updates:
+        return {}
+    decisions = _load_issue_decisions(dataset_id)
+    updated: Dict[str, Dict[str, Any]] = {}
+    for issue_id, accepted, reason in updates:
+        entry = {
+            "issue_id": issue_id,
+            "accepted": accepted,
+            "reason": reason,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        decisions[issue_id] = entry
+        updated[issue_id] = entry
+    _save_issue_decisions(dataset_id, decisions)
+    return updated
+
+
+def _apply_issue_decisions(
+    dataset_id: str, result: AnalysisResultResponse
+) -> AnalysisResultResponse:
+    decisions = _load_issue_decisions(dataset_id)
+    if not decisions:
+        return result
+    for issue in result.issues:
+        decision = decisions.get(issue.id)
+        if decision is not None:
+            issue.accepted = bool(decision.get("accepted"))
+        else:
+            issue.accepted = None
+    return result
+
+
+def _update_cleaning_plan(
+    dataset_id: str, analysis: Optional[AnalysisResultResponse] = None
+) -> None:
+    try:
+        dataset_dir = dataset_dir_path(DATA_DIR, dataset_id)
+    except FileNotFoundError:
+        return
+
+    if analysis is None:
+        try:
+            analysis = _load_analysis_result(dataset_id)
+        except FileNotFoundError:
+            return
+
+    decisions = _load_issue_decisions(dataset_id)
+    plan = {
+        "dataset_id": dataset_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "accepted": 0,
+            "rejected": 0,
+            "pending": 0,
+        },
+        "accepted": [],
+        "rejected": [],
+        "pending_issue_ids": [],
+    }
+
+    for issue in analysis.issues:
+        entry = {
+            "issue_id": issue.id,
+            "type": issue.type,
+            "category": issue.category,
+            "severity": issue.severity,
+            "affectedColumns": issue.affectedColumns,
+            "suggestedAction": issue.suggestedAction,
+            "detector_code": (issue.investigation.code if issue.investigation else None),
+            "decision_reason": decisions.get(issue.id, {}).get("reason"),
+        }
+        decision = decisions.get(issue.id)
+        if decision is None:
+            plan["pending_issue_ids"].append(issue.id)
+            plan["summary"]["pending"] += 1
+            continue
+        if decision.get("accepted"):
+            plan["accepted"].append(entry)
+            plan["summary"]["accepted"] += 1
+        else:
+            plan["rejected"].append(entry)
+            plan["summary"]["rejected"] += 1
+
+    plan_path = dataset_dir / "cleaning_plan.json"
+    plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
 
 
 def _persist_smart_fix_response(
@@ -673,7 +805,9 @@ async def _run_dataset_analysis(
                 ),
             )
 
+            result = _apply_issue_decisions(dataset_id, result)
             _persist_analysis_result(DATA_DIR / dataset_id, result)
+            _update_cleaning_plan(dataset_id, result)
             logger.info(f"Code-based analysis complete: {len(issues)} issues found")
             report(
                 "log",
@@ -707,7 +841,9 @@ async def _run_dataset_analysis(
         completedAt=backup_payload["completedAt"],
     )
 
+    result = _apply_issue_decisions(dataset_id, result)
     _persist_analysis_result(DATA_DIR / dataset_id, result)
+    _update_cleaning_plan(dataset_id, result)
     report("log", "Backup analysis cached to disk")
     return result
 
@@ -771,6 +907,17 @@ def apply_dataset_changes(dataset_id: str, payload: ApplyIssuesRequest):
 
     _persist_applied_issues(dataset_id, list(applied_before))
 
+    if applied_now:
+        _upsert_issue_decisions(
+            dataset_id,
+            [(issue_id, True, None) for issue_id in applied_now],
+        )
+        for issue in analysis.issues:
+            if issue.id in applied_now:
+                issue.accepted = True
+        _persist_analysis_result(DATA_DIR / dataset_id, analysis)
+        _update_cleaning_plan(dataset_id, analysis)
+
     message = f"Applied {len(applied_now)} issues; {len(skipped)} skipped"
 
     return ApplyIssuesResponse(
@@ -778,6 +925,48 @@ def apply_dataset_changes(dataset_id: str, payload: ApplyIssuesRequest):
         applied=applied_now,
         skipped=skipped,
         message=message,
+    )
+
+
+@app.post("/datasets/{dataset_id}/issues/decision", response_model=IssueDecisionResponse)
+def record_issue_decision(dataset_id: str, payload: IssueDecisionRequest):
+    try:
+        load_dataset_metadata(DATA_DIR, dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if not payload.issueId:
+        raise HTTPException(status_code=400, detail="issueId requis")
+
+    try:
+        analysis = _load_analysis_result(dataset_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    issue_ids = {issue.id for issue in analysis.issues}
+    if payload.issueId not in issue_ids:
+        raise HTTPException(status_code=400, detail="issueId inconnu")
+
+    updated = _upsert_issue_decisions(
+        dataset_id,
+        [(payload.issueId, payload.accepted, payload.reason)],
+    )
+    decision_entry = updated[payload.issueId]
+
+    for issue in analysis.issues:
+        if issue.id == payload.issueId:
+            issue.accepted = payload.accepted
+            break
+
+    _persist_analysis_result(DATA_DIR / dataset_id, analysis)
+    _update_cleaning_plan(dataset_id, analysis)
+
+    return IssueDecisionResponse(
+        dataset_id=dataset_id,
+        issue_id=payload.issueId,
+        accepted=payload.accepted,
+        reason=payload.reason,
+        updated_at=decision_entry["updated_at"],
     )
 
 
