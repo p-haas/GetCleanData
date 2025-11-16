@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from .chat import init_llm, chat_with_user
+from .config import settings
 from .dataset_store import (
     dataset_dir_path,
     generate_dataset_id,
@@ -631,7 +632,10 @@ async def stream_dataset_analysis(dataset_id: str):
     )
 
 
-def _run_dataset_analysis(dataset_id: str) -> AnalysisResultResponse:
+async def _run_dataset_analysis(dataset_id: str) -> AnalysisResultResponse:
+    """
+    Run dataset analysis using Claude code execution (if enabled) or fallback to heuristics.
+    """
     metadata = load_dataset_metadata(DATA_DIR, dataset_id)
     try:
         df = _load_dataframe(metadata)
@@ -639,6 +643,59 @@ def _run_dataset_analysis(dataset_id: str) -> AnalysisResultResponse:
         raise HTTPException(status_code=500, detail=f"Erreur de lecture du dataset: {exc}") from exc
 
     context = load_dataset_context(DATA_DIR, dataset_id)
+    
+    # Try code-based analysis if agent is enabled
+    if settings.agent_enabled:
+        try:
+            from .code_analysis import analyze_dataset_with_code
+            
+            # Load dataset understanding
+            try:
+                understanding_path = DATA_DIR / dataset_id / "understanding.json"
+                if understanding_path.exists():
+                    understanding = json.loads(understanding_path.read_text())
+                else:
+                    raise FileNotFoundError()
+            except (FileNotFoundError, json.JSONDecodeError):
+                # If no understanding yet, create minimal one
+                understanding = {
+                    "summary": {
+                        "name": metadata.file_name,
+                        "rowCount": len(df),
+                        "columnCount": len(df.columns),
+                        "description": "Dataset uploaded for analysis"
+                    },
+                    "columns": []
+                }
+            
+            # Run code-based analysis
+            logger.info(f"Running code-based analysis for {dataset_id}")
+            analysis_result = await analyze_dataset_with_code(
+                dataset_id=dataset_id,
+                df=df,
+                dataset_understanding=understanding,
+                user_instructions=context.get("instructions", "")
+            )
+            
+            # Convert to expected response format
+            issues = [IssueResponse(**issue) for issue in analysis_result.get("issues", [])]
+            result = AnalysisResultResponse(
+                dataset_id=dataset_id,
+                issues=issues,
+                summary=analysis_result.get("summary", "Analysis complete"),
+                completedAt=analysis_result.get("completedAt", datetime.now(timezone.utc).isoformat()),
+            )
+            
+            _persist_analysis_result(DATA_DIR / dataset_id, result)
+            logger.info(f"Code-based analysis complete: {len(issues)} issues found")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Code-based analysis failed: {e}, falling back to heuristics")
+            # Fall through to heuristics
+    
+    # Fallback to heuristics
+    logger.info(f"Using heuristic analysis for {dataset_id}")
     quick_fix_issues = _generate_missing_value_issues(dataset_id, df)
     duplicate_issue = _generate_duplicate_issue(dataset_id, df)
     smart_fix_issue = _generate_smart_fix_issue(dataset_id, context)
@@ -664,13 +721,13 @@ def _run_dataset_analysis(dataset_id: str) -> AnalysisResultResponse:
 
 
 @app.post("/datasets/{dataset_id}/analysis", response_model=AnalysisResultResponse)
-def analyze_dataset_endpoint(dataset_id: str):
+async def analyze_dataset_endpoint(dataset_id: str):
     try:
         load_dataset_metadata(DATA_DIR, dataset_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    return _run_dataset_analysis(dataset_id)
+    return await _run_dataset_analysis(dataset_id)
 
 
 @app.post("/datasets/{dataset_id}/apply", response_model=ApplyIssuesResponse)
