@@ -2,6 +2,7 @@
 from typing import Any, AsyncGenerator, List, Literal, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -38,6 +39,14 @@ SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 app = FastAPI(title="Claude Excel Context API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080", "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ChatRequest(BaseModel):
