@@ -61,10 +61,10 @@ This document captures the concrete steps required to mature the FastAPI backend
 
 **Deliverable/Test**: Submitting a smart fix answer from the dialog leads to a stored entry and optional status update; backend logs confirm receipt. (✅ Verified via POST `/datasets/<id>/smart-fix` curl on 2025-11-16.)
 
-## 8. Health & Observability
+## 8. Health & Observability ✅
 
 - Keep `/health` lightweight and add metrics (last analysis timestamp, queued jobs) for deployment monitoring.
 - Add structured logging around each route (dataset id, duration, outcomes) to simplify debugging.
 - Consider a nightly smoke script hitting health → upload → understanding → context → stream → analysis → apply to guard against regressions.
 
-**Deliverable/Test**: Automated smoke test script exits successfully and CI/CD wiring reports failures when any step regresses.
+**Deliverable/Test**: Automated smoke test script exits successfully and CI/CD wiring reports failures when any step regresses. (✅ Health endpoint extended and `scripts/smoke_test.py` added on 2025-11-16.)
