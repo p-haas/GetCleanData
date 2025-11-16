@@ -46,12 +46,12 @@ With the FastAPI backend endpoints now live, this plan enumerates the work neede
 
 **Deliverable/Test**: After the POST resolves, the issue counts in the UI match the backend response captured via the browser’s network tab. (✅ Verified on 2025-11-16.)
 
-## 7. Apply Fixes Button
+## 7. Apply Fixes Button ✅
 
 - Wire the “Apply selected issues” action to POST `/datasets/{datasetId}/apply` with the selected issue IDs, updating UI state (e.g., mark issues as applied or disable checkboxes).
 - Surface backend errors in toasts.
 
-**Deliverable/Test**: Selecting issues and applying them yields the backend confirmation (`applied` vs `skipped`); subsequent clicks skip already-applied IDs.
+**Deliverable/Test**: Selecting issues and applying them yields the backend confirmation (`applied` vs `skipped`); subsequent clicks skip already-applied IDs. (✅ Verified on 2025-11-16.)
 
 ## 8. Smart Fix Dialog Submission
 
