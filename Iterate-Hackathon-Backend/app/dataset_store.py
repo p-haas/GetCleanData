@@ -64,6 +64,8 @@ def persist_dataset_file(
         "dataset_id": dataset_id,
         "original_filename": original_filename,
         "stored_file": str(raw_path.relative_to(data_dir.parent)),
+        "raw_filename": raw_path.name,
+        "extension": extension,
         "file_size_bytes": len(file_bytes),
         "file_type": infer_file_type(extension),
         "delimiter": delimiter if extension == ".csv" else None,
@@ -75,3 +77,36 @@ def persist_dataset_file(
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     return metadata
+
+
+def load_dataset_metadata(data_dir: Path, dataset_id: str) -> dict:
+    metadata_path = data_dir / dataset_id / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Aucun metadata.json pour dataset_id={dataset_id}")
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.setdefault("dataset_id", dataset_id)
+    metadata.setdefault("raw_filename", f"raw{metadata.get('extension', '')}")
+    metadata["_metadata_path"] = str(metadata_path)
+    return metadata
+
+
+def resolve_raw_path(data_dir: Path, metadata: dict) -> Path:
+    dataset_id = metadata.get("dataset_id")
+    dataset_dir = data_dir / dataset_id
+
+    raw_filename = metadata.get("raw_filename")
+    if raw_filename:
+        candidate = dataset_dir / raw_filename
+        if candidate.exists():
+            return candidate
+
+    stored_file = metadata.get("stored_file")
+    if stored_file:
+        stored_path = Path(stored_file)
+        if not stored_path.is_absolute():
+            stored_path = data_dir.parent / stored_path
+        if stored_path.exists():
+            return stored_path
+
+    raise FileNotFoundError(f"Impossible de localiser le fichier brut pour dataset_id={dataset_id}")

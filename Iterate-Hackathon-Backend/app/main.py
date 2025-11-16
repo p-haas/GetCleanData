@@ -1,5 +1,5 @@
 # app/main.py
-from typing import Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
@@ -8,7 +8,9 @@ from .chat import init_llm, chat_with_user
 from .dataset_store import (
     generate_dataset_id,
     infer_delimiter,
+    load_dataset_metadata,
     persist_dataset_file,
+    resolve_raw_path,
 )
 from .excel_context import build_excel_context
 from .tools import generate_error_analysis_script
@@ -37,6 +39,26 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+
+
+class ColumnSummary(BaseModel):
+    name: str
+    dataType: Literal["string", "numeric", "date", "categorical", "boolean"]
+    description: str
+    sampleValues: Optional[List[str]] = None
+
+
+class DatasetSummary(BaseModel):
+    name: str
+    description: str
+    rowCount: int
+    columnCount: int
+    observations: List[str]
+
+
+class DatasetUnderstandingResponse(BaseModel):
+    summary: DatasetSummary
+    columns: List[ColumnSummary]
 
 
 class UploadDatasetResponse(BaseModel):
@@ -93,6 +115,90 @@ async def upload_dataset(file: UploadFile = File(...)):
         storage_path=metadata["stored_file"],
         uploaded_at=metadata["uploaded_at"],
     )
+
+
+def _infer_column_type(series: pd.Series) -> str:
+    if pd.api.types.is_bool_dtype(series):
+        return "boolean"
+    if pd.api.types.is_numeric_dtype(series):
+        return "numeric"
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return "date"
+    if pd.api.types.is_object_dtype(series):
+        unique_ratio = 0
+        try:
+            unique_ratio = series.nunique(dropna=True) / max(len(series), 1)
+        except Exception:
+            unique_ratio = 0
+        if unique_ratio <= 0.2:
+            return "categorical"
+    return "string"
+
+
+def _build_column_summary(series: pd.Series) -> ColumnSummary:
+    data_type = _infer_column_type(series)
+    total = len(series)
+    missing = int(series.isna().sum())
+    unique = int(series.nunique(dropna=True))
+    description = (
+        f"Detected as {data_type}. {unique} unique values"
+        f" with {missing} missing entries out of {total}."
+    )
+
+    samples: List[str] = []
+    for value in series.dropna().head(3).tolist():
+        samples.append(str(value))
+
+    return ColumnSummary(
+        name=str(series.name),
+        dataType=data_type,  # type: ignore[arg-type]
+        description=description,
+        sampleValues=samples or None,
+    )
+
+
+@app.get("/datasets/{dataset_id}/understanding", response_model=DatasetUnderstandingResponse)
+def get_dataset_understanding(dataset_id: str):
+    try:
+        metadata = load_dataset_metadata(DATA_DIR, dataset_id)
+        raw_path = resolve_raw_path(DATA_DIR, metadata)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    file_type = metadata.get("file_type", "csv")
+    delimiter = metadata.get("delimiter") or ","
+
+    try:
+        if file_type == "excel":
+            df = pd.read_excel(raw_path)
+        else:
+            df = pd.read_csv(raw_path, delimiter=delimiter)
+    except Exception as exc:  # pragma: no cover - runtime failure surfaced to caller
+        raise HTTPException(status_code=500, detail=f"Erreur de lecture du dataset: {exc}") from exc
+
+    columns = [
+        _build_column_summary(df[col])
+        for col in df.columns
+    ]
+
+    missing_counts = df.isna().sum().sort_values(ascending=False)
+    observations: List[str] = []
+    for col, count in missing_counts.head(3).items():
+        if count > 0:
+            observations.append(f"{col} contient {int(count)} valeurs manquantes")
+
+    if not observations:
+        observations.append("Aucun signal de qualité majeur détecté sur les 3 premières colonnes.")
+
+    summary = DatasetSummary(
+        name=metadata.get("original_filename", dataset_id),
+        description=f"Dataset importé via {metadata.get('file_type', 'csv').upper()} le {metadata.get('uploaded_at', '')}",
+        rowCount=int(df.shape[0]),
+        columnCount=int(df.shape[1]),
+        observations=observations,
+    )
+
+    return DatasetUnderstandingResponse(summary=summary, columns=columns)
 
 
 @app.post("/chat", response_model=ChatResponse)

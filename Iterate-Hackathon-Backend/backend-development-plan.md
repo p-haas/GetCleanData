@@ -20,13 +20,13 @@ This document captures the concrete steps required to mature the FastAPI backend
 
 **Deliverable/Test**: `curl -F file=@sample.csv http://localhost:8000/datasets` succeeds, stores the file, and returns JSON consumed by the frontend without further changes. (✅ Verified on 2025-11-16.)
 
-## 3. Dataset Understanding Endpoint
+## 3. Dataset Understanding Endpoint ✅
 
 - Implement `/datasets/{datasetId}/understanding` that loads the persisted `data/{datasetId}/raw.*` file and the accompanying `metadata.json` written in Step 2.
 - Compute summary stats (row/column counts, sample values, observations) and return `Column` entries that match `frontend/src/types/dataset.ts`.
 - Reuse pandas profiling logic or lightweight heuristics, but keep the response deterministic for a given dataset.
 
-**Deliverable/Test**: Opening the “Understand” step triggers a real backend call and renders the returned schema in the UI. Automated test: GET on the endpoint returns stable fixture data for a known CSV.
+**Deliverable/Test**: Opening the “Understand” step triggers a real backend call and renders the returned schema in the UI. Automated test: GET on the endpoint returns stable fixture data for a known CSV. (✅ Verified via `curl /datasets/<id>/understanding` on 2025-11-16.)
 
 ## 4. Context Persistence
 
