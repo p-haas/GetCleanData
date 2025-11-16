@@ -54,12 +54,20 @@ class APIClient {
   }
 
   async uploadDataset(file: File): Promise<{ datasetId: string }> {
-    await delay(1500);
-    // Simulate upload
-    console.log('Uploading dataset:', file.name);
-    return {
-      datasetId: `dataset_${Date.now()}`
-    };
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseURL}/datasets`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new APIError(errorText || 'Failed to upload dataset', response.status);
+    }
+
+    return response.json();
   }
 
   async getDatasetUnderstanding(datasetId: string): Promise<DatasetUnderstanding> {
