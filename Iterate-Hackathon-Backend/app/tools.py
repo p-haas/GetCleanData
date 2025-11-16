@@ -15,6 +15,7 @@ def strip_code_fences(text: str) -> str:
     text = text.replace("```", "")
     return text.strip()
 
+
 def _get_codegen_llm(temperature=0.0) -> ChatAnthropic:
     """
     LLM dédié à la génération de code.
@@ -32,12 +33,13 @@ def _get_codegen_llm(temperature=0.0) -> ChatAnthropic:
 # TOOL 1 : Générer un script d'ANALYSE d'erreurs
 # ----------------------------------------------------------------------
 
+
 def generate_error_analysis_script(
     column_names: List[str],
     metadata: str,
     file_type: Literal["excel", "csv"] = "excel",
     delimiter: str = ",",
-        ) -> str:
+) -> str:
 
     llm = _get_codegen_llm(temperature=0.0)
 
@@ -51,7 +53,6 @@ def generate_error_analysis_script(
         "You MUST strictly follow the instructions and return ONLY Python code, "
         "without backticks, without explanations, without surrounding text."
     )
-
 
     user_prompt = f"""
 Dataset context
@@ -224,8 +225,6 @@ IMPORTANT — ABSOLUTE RULES:
 If you output anything other than pure Python code, it will break the system.
 """
 
-
-
     ai_msg = llm.invoke(
         [
             {"role": "system", "content": system_prompt},
@@ -233,13 +232,13 @@ If you output anything other than pure Python code, it will break the system.
         ]
     )
 
-
     return strip_code_fences(ai_msg.content)
 
 
 # ----------------------------------------------------------------------
 # TOOL 2 : Générer un script de CORRECTION des erreurs
 # ----------------------------------------------------------------------
+
 
 def generate_error_correction_script(
     column_names: List[str],
@@ -280,7 +279,11 @@ def generate_error_correction_script(
         "La sortie doit être UNIQUEMENT le code Python complet."
     )
 
-    history_part = f"\nHistorique / contexte supplémentaire :\n{history_summary}\n" if history_summary else ""
+    history_part = (
+        f"\nHistorique / contexte supplémentaire :\n{history_summary}\n"
+        if history_summary
+        else ""
+    )
 
     user_prompt = f"""
 Noms de colonnes EXACTES :
